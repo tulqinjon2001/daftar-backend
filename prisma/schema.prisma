@@ -1,0 +1,318 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ——— Enums ———
+
+enum Role {
+  SuperAdmin
+  Owner
+  Delivery
+  Customer
+}
+
+enum DebtStatus {
+  ACTIVE
+  PAID
+  PARTIAL
+}
+
+// ——— Users (Role asosida) ———
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String?
+  phone     String?
+  role      Role     @default(Customer)
+  createdAt DateTime @map("created_at") @default(now())
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  shopsAsOwner    Shop[]
+  debtsAsCreditor Debt[]  @relation("DebtCreditor")
+  debtsAsDebtor   Debt[]  @relation("DebtDebtor")
+  products        Product[]
+  notifications   Notification[]
+
+  @@map("users")
+}
+
+// ——— Shops (do'kon ma'lumotlari va ish vaqtlari) ———
+
+model Shop {
+  id          String   @id @default(uuid())
+  name        String
+  address     String?
+  description String?
+  ownerId     String   @map("owner_id")
+  // Ish vaqtlari: har bir kun uchun ochilish-yopilish (JSON yoki alohida maydonlar)
+  openAt       String?  @map("open_at")   // masalan "09:00"
+  closeAt      String?  @map("close_at")  // masalan "18:00"
+  workDays     String?  @map("work_days") // masalan "1,2,3,4,5" (dushanba–juma)
+  cashBalance  Decimal  @default(0) @map("cash_balance")  @db.Decimal(14, 2)
+  cardBalance  Decimal  @default(0) @map("card_balance")  @db.Decimal(14, 2)
+  bankBalance  Decimal  @default(0) @map("bank_balance")  @db.Decimal(14, 2)
+  createdAt    DateTime @map("created_at") @default(now())
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  owner         User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  debts         Debt[]
+  products      Product[]
+  suppliers     Supplier[]
+  supplierDebts SupplierDebt[]
+  expenses      Expense[]
+  sales         Sale[]
+
+  @@map("shops")
+}
+
+// ——— Sale (savdo yozuvi, sana/vaqt va balansga qo'shilgan) ———
+
+model Sale {
+  id           String   @id @default(uuid())
+  shopId       String   @map("shop_id")
+  cashAmount   Decimal  @map("cash_amount") @db.Decimal(14, 2)
+  cardAmount   Decimal  @map("card_amount") @db.Decimal(14, 2)
+  bankAmount   Decimal  @map("bank_amount") @db.Decimal(14, 2)
+  saleDate     DateTime @map("sale_date")   // sana va vaqt
+  comment      String?
+  createdAt    DateTime @map("created_at") @default(now())
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, saleDate])
+  @@map("sales")
+}
+
+// ——— Expense (xarajatlar) ———
+
+model Expense {
+  id            String   @id @default(uuid())
+  shopId        String   @map("shop_id")
+  amount        Decimal  @db.Decimal(14, 2)
+  category      String?
+  description   String?
+  paymentMethod String?  @map("payment_method") // CASH, CARD, BANK — xarajat qaysi balansdan ayiriladi
+  expenseDate   DateTime @map("expense_date") @db.Date
+  createdAt     DateTime @map("created_at") @default(now())
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, expenseDate])
+  @@map("expenses")
+}
+
+// ——— Debts (qarz miqdori, statusi, muddati) ———
+
+model Debt {
+  id          String     @id @default(uuid())
+  amount      Decimal    @db.Decimal(14, 2)
+  paidAmount  Decimal    @default(0) @map("paid_amount") @db.Decimal(14, 2)
+  status      DebtStatus @default(ACTIVE)
+  dueDate     DateTime?  @map("due_date") @db.Date
+  description String?
+  shopId      String     @map("shop_id")
+  creditorId String     @map("creditor_id") // qarz beruvchi (Owner/Shop)
+  debtorId    String     @map("debtor_id")   // qarz oluvchi (Customer)
+  createdAt   DateTime   @map("created_at") @default(now())
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  shop     Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  creditor User         @relation("DebtCreditor", fields: [creditorId], references: [id], onDelete: Cascade)
+  debtor   User         @relation("DebtDebtor", fields: [debtorId], references: [id], onDelete: Cascade)
+  history  DebtHistory[]
+
+  @@index([shopId])
+  @@index([debtorId])
+  @@map("debts")
+}
+
+// ——— DebtHistory (qarz o'zgarishlari auditi) ———
+
+model DebtHistory {
+  id          String   @id @default(uuid())
+  debtId      String   @map("debt_id")
+  action      String   // masalan: CREATED, UPDATED, PAYMENT, STATUS_CHANGED
+  oldAmount   Decimal? @map("old_amount") @db.Decimal(14, 2)
+  newAmount   Decimal? @map("new_amount") @db.Decimal(14, 2)
+  oldStatus   DebtStatus? @map("old_status")
+  newStatus   DebtStatus? @map("new_status")
+  payload       Json?    // qo'shimcha ma'lumot (to'lov summasi, izoh va h.k.)
+  paymentMethod String?  @map("payment_method") // CASH, CARD, BANK — mijoz to'lovi qanday qabul qilindi
+  performedBy   String?  @map("performed_by")
+  createdAt     DateTime @map("created_at") @default(now())
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  debt Debt @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  @@index([debtId, createdAt])
+  @@map("debt_history")
+}
+
+// ——— Products (dillerlar qo'shadigan mahsulotlar) ———
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  price       Decimal? @db.Decimal(14, 2)
+  unit        String?  // dona, kg, litr va h.k.
+  addedById   String   @map("added_by_id")
+  shopId      String?  @map("shop_id") // agar mahsulot do'konga tegishli bo'lsa
+  createdAt   DateTime @map("created_at") @default(now())
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  addedBy User  @relation(fields: [addedById], references: [id], onDelete: Cascade)
+  shop    Shop? @relation(fields: [shopId], references: [id], onDelete: SetNull)
+
+  @@map("products")
+}
+
+// ——— Suppliers (ta'minotchilar) ———
+
+model Supplier {
+  id        String   @id @default(uuid())
+  shopId    String   @map("shop_id")
+  name      String
+  phone     String?
+  createdAt DateTime @map("created_at") @default(now())
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  shop  Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  debt  SupplierDebt?
+
+  @@index([shopId])
+  @@map("suppliers")
+}
+
+model SupplierDebt {
+  id          String     @id @default(uuid())
+  supplierId  String     @unique @map("supplier_id")
+  shopId      String     @map("shop_id")
+  amount      Decimal    @db.Decimal(14, 2)
+  paidAmount  Decimal    @default(0) @map("paid_amount") @db.Decimal(14, 2)
+  status      DebtStatus @default(ACTIVE)
+  dueDate     DateTime?  @map("due_date") @db.Date
+  description String?
+  createdAt   DateTime   @map("created_at") @default(now())
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  supplier Supplier              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  shop     Shop                  @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  history  SupplierDebtHistory[]
+
+  @@index([shopId])
+  @@map("supplier_debts")
+}
+
+model SupplierDebtHistory {
+  id             String   @id @default(uuid())
+  supplierDebtId String   @map("supplier_debt_id")
+  action         String
+  oldAmount      Decimal? @map("old_amount") @db.Decimal(14, 2)
+  newAmount      Decimal? @map("new_amount") @db.Decimal(14, 2)
+  payload        Json?
+  paymentMethod  String?  @map("payment_method") // CASH, CARD, BANK — ta'minotchiga qanday to'landi
+  performedBy    String?  @map("performed_by")
+  createdAt      DateTime @map("created_at") @default(now())
+
+  supplierDebt SupplierDebt @relation(fields: [supplierDebtId], references: [id], onDelete: Cascade)
+
+  @@index([supplierDebtId, createdAt])
+  @@map("supplier_debt_history")
+}
+
+// ——— Notifications (Socket.io uchun bildirishnomalar) ———
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  title     String
+  body      String?
+  read      Boolean  @default(false)
+  payload   Json?    // Socket.io yoki frontend uchun qo'shimcha ma'lumot
+  createdAt DateTime @map("created_at") @default(now())
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model TelegramChatLink {
+  id        String   @id @default(uuid())
+  phone     String   @unique
+  chatId    String   @map("chat_id")
+  createdAt DateTime @map("created_at") @default(now())
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("telegram_chat_links")
+}
+
+model OtpCode {
+  id           String   @id
+  scope        String   @unique
+  kind         String
+  phoneNorm    String?  @map("phone_norm")
+  userId       String?  @map("user_id")
+  newPhoneNorm String?  @map("new_phone_norm")
+  code         String
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @map("created_at") @default(now())
+  updatedAt    DateTime @map("updated_at") @updatedAt
+
+  @@map("otp_codes")
+}
+
+model OtpDeliveryToken {
+  token        String   @id
+  scope        String
+  kind         String
+  phoneNorm    String?  @map("phone_norm")
+  userId       String?  @map("user_id")
+  newPhoneNorm String?  @map("new_phone_norm")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @map("created_at") @default(now())
+
+  @@map("otp_delivery_tokens")
+}
+
+model LegacyProfilePasswordCode {
+  userId    String   @id @map("user_id")
+  code      String
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @map("created_at") @default(now())
+  updatedAt DateTime @map("updated_at") @updatedAt
+
+  @@map("otp_profile_password_codes")
+}
+
+model OtpVerifiedGrant {
+  id        String   @id
+  scope     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @map("created_at") @default(now())
+
+  @@map("otp_verified_grants")
+}
+
+model RefreshSession {
+  id         String    @id
+  userId     String    @map("user_id")
+  tokenHash  String    @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  replacedBy String?   @map("replaced_by")
+  createdAt  DateTime  @map("created_at") @default(now())
+  updatedAt  DateTime  @map("updated_at") @updatedAt
+
+  @@map("refresh_sessions")
+}
