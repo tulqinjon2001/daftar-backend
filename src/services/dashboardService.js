@@ -26,10 +26,13 @@ async function getDashboardStats(shopId) {
   const debts = await prisma.debt.findMany({
     where: { shopId },
     include: {
-      debtor: { select: { id: true, name: true } },
+      debtor: { select: { id: true, name: true, phone: true } },
       history: { select: { action: true, payload: true, createdAt: true } },
     },
   });
+
+  /** Har bir mijoz (debtor) bo'yicha joriy qarz va to'langan summa — top-10 uchun */
+  const debtorDebtRows = [];
 
   let totalDebtBalance = 0;
   let totalReceivedFromDebts = 0;
@@ -45,6 +48,25 @@ async function getDashboardStats(shopId) {
     if (balance > 0) totalDebtBalance += balance;
     clientTotalOlingan += amount;
     clientTotalTolangan += paid;
+
+    const name = d.debtor.name || "";
+    const initials =
+      name
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p[0])
+        .join("")
+        .toUpperCase() || "MJ";
+    debtorDebtRows.push({
+      id: d.debtorId,
+      name,
+      phone: d.debtor.phone || "",
+      initials,
+      currentDebt: balance,
+      totalPaid: paid,
+    });
 
     if (!debtorStats[d.debtorId]) {
       debtorStats[d.debtorId] = {
@@ -99,18 +121,61 @@ async function getDashboardStats(shopId) {
   const totalReceived = totalReceivedFromDebts + totalSalesAdded;
   const todayTotal = todayReceivedFromDebts + todaySalesAdded;
 
-  // Yetkazuvchilar bo'yicha: jami tovar olindi, jami to'landi, joriy qarz
+  // Yetkazuvchilar bo'yicha: jami tovar olindi, jami to'landi, joriy qarz + top-10
   const supplierDebts = await prisma.supplierDebt.findMany({
     where: { shopId },
-    select: { amount: true, paidAmount: true },
+    select: {
+      id: true,
+      supplierId: true,
+      amount: true,
+      paidAmount: true,
+      supplier: { select: { id: true, name: true, phone: true } },
+    },
   });
+  const supplierDebtRows = [];
   let supplierTotalGoodsTaken = 0;
   let supplierTotalPaid = 0;
   for (const sd of supplierDebts) {
-    supplierTotalGoodsTaken += toNum(sd.amount);
-    supplierTotalPaid += toNum(sd.paidAmount);
+    const amount = toNum(sd.amount);
+    const paid = toNum(sd.paidAmount);
+    supplierTotalGoodsTaken += amount;
+    supplierTotalPaid += paid;
+    const balance = amount - paid;
+    const name = sd.supplier.name || "";
+    const initials =
+      name
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p[0])
+        .join("")
+        .toUpperCase() || "YT";
+    supplierDebtRows.push({
+      id: sd.supplierId,
+      debtId: sd.id,
+      name,
+      phone: sd.supplier.phone || "",
+      initials,
+      currentDebt: balance,
+      totalPaid: paid,
+    });
   }
   const supplierCurrentDebt = supplierTotalGoodsTaken - supplierTotalPaid;
+
+  const topSuppliersByBalance = [...supplierDebtRows]
+    .filter((r) => r.currentDebt > 0)
+    .sort((a, b) => b.currentDebt - a.currentDebt)
+    .slice(0, 10);
+  const topSuppliersByRepaid = [...supplierDebtRows]
+    .sort((a, b) => b.totalPaid - a.totalPaid)
+    .slice(0, 10);
+
+  const byBalance = [...debtorDebtRows]
+    .filter((r) => r.currentDebt > 0)
+    .sort((a, b) => b.currentDebt - a.currentDebt)
+    .slice(0, 10);
+  const byRepaid = [...debtorDebtRows].sort((a, b) => b.totalPaid - a.totalPaid).slice(0, 10);
 
   return {
     success: true,
@@ -138,6 +203,10 @@ async function getDashboardStats(shopId) {
         totalPaid: supplierTotalPaid,
         currentDebt: supplierCurrentDebt,
       },
+      topDebtorsByBalance: byBalance,
+      topDebtorsByRepaid: byRepaid,
+      topSuppliersByBalance,
+      topSuppliersByRepaid,
     },
     message: "OK",
   };

@@ -41,6 +41,19 @@ async function registerOwner(req, res) {
   }
 }
 
+async function registerCustomer(req, res) {
+  try {
+    const result = await authService.registerCustomer(req.body);
+    if (!result.success) {
+      return apiResponse(res, false, null, result.message, 400);
+    }
+    apiResponse(res, true, result.data, result.message);
+  } catch (err) {
+    console.error("registerCustomer", err);
+    apiResponse(res, false, null, "Registration failed", 500);
+  }
+}
+
 async function sendOwnerCode(req, res) {
   try {
     const { phone } = req.body;
@@ -228,6 +241,7 @@ async function logoutRefresh(req, res) {
 module.exports = {
   login,
   registerOwner,
+  registerCustomer,
   sendOwnerCode,
   verifyOwnerCode,
   sendResetCode,

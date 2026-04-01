@@ -81,12 +81,25 @@ async function addSaleToBalance(shopId, { cashAmount = 0, cardAmount = 0, bankAm
 
 /**
  * Balansdan ayirish (ta'minotchi to'lovi yoki xarajat). paymentMethod: CASH | CARD | BANK
+ * @param {{ allowInsufficient?: boolean }} [options] allowInsufficient: true — balans yetmasa ham ayirish (manfiy qoldiq mumkin, masalan ta'minotchiga to'lov)
  */
-async function deductFromBalance(shopId, paymentMethod, amount, tx) {
+async function deductFromBalance(shopId, paymentMethod, amount, tx, options = {}) {
   const method = validatePaymentMethod(paymentMethod);
   const num = Number(amount);
   if (!num || num <= 0) return { success: false, message: "Invalid amount" };
   const db = dbOf(tx);
+  const allowInsufficient = options.allowInsufficient === true;
+
+  if (allowInsufficient) {
+    const data = {};
+    if (method === "CASH") data.cashBalance = { decrement: num };
+    else if (method === "CARD") data.cardBalance = { decrement: num };
+    else data.bankBalance = { decrement: num };
+    const updated = await db.shop.updateMany({ where: { id: shopId }, data });
+    if (!updated || updated.count === 0) return { success: false, message: "Shop not found" };
+    return { success: true };
+  }
+
   let updated = null;
   if (method === "CASH") {
     updated = await db.shop.updateMany({

@@ -177,8 +177,10 @@ async function paySupplierDebt(ownerId, shopId, body) {
       if (!supplier || !supplier.debt) throw new Error("Supplier or debt not found");
 
       if (paymentMethod) {
-        const balanceResult = await balanceService.deductFromBalance(shopId, paymentMethod, amountNum, tx);
-        if (!balanceResult.success) throw new Error(balanceResult.message || "Balans yetarli emas");
+        const balanceResult = await balanceService.deductFromBalance(shopId, paymentMethod, amountNum, tx, {
+          allowInsufficient: true,
+        });
+        if (!balanceResult.success) throw new Error(balanceResult.message || "Balans xatosi");
       }
 
       const debt = supplier.debt;

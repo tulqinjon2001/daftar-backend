@@ -212,4 +212,104 @@ async function getAllDebtHistory(shopId) {
   return { success: true, data: { history }, message: "OK" };
 }
 
-module.exports = { writeDebt, payDebt, getDebtHistory, getAllDebtHistory };
+async function getMyDebtSummary(userId) {
+  if (!userId) return { success: false, message: "userId required" };
+  const me = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, phone: true, role: true, name: true },
+  });
+  if (!me) return { success: false, message: "User not found" };
+
+  const digits = String(me.phone || "").replace(/\D/g, "");
+  const p9 = digits.slice(-9);
+  const p998 = digits.startsWith("998") ? digits : p9 ? `998${p9}` : "";
+  const debtorPhoneOr = [];
+  if (p9) debtorPhoneOr.push({ debtor: { phone: p9 } });
+  if (p998) debtorPhoneOr.push({ debtor: { phone: p998 } });
+
+  const debts = await prisma.debt.findMany({
+    where: {
+      OR: [{ debtorId: userId }, ...debtorPhoneOr],
+    },
+    include: {
+      shop: { select: { id: true, name: true } },
+      debtor: { select: { id: true, phone: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const debtIds = debts.map((d) => d.id);
+  const historyRows = debtIds.length
+    ? await prisma.debtHistory.findMany({
+        where: { debtId: { in: debtIds } },
+        include: { debt: { include: { shop: { select: { id: true, name: true } } } } },
+        orderBy: { createdAt: "desc" },
+      })
+    : [];
+
+  const debtsByShopMap = new Map();
+  let totalBorrowed = 0;
+  let totalPaid = 0;
+  let totalCurrentDebt = 0;
+
+  for (const d of debts) {
+    const amount = toNum(d.amount);
+    const paid = toNum(d.paidAmount);
+    const current = amount - paid;
+    totalBorrowed += amount;
+    totalPaid += paid;
+    totalCurrentDebt += current;
+
+    const key = d.shop?.id || "unknown";
+    const prev = debtsByShopMap.get(key) || {
+      shopId: d.shop?.id || "",
+      shopName: d.shop?.name || "Do'kon",
+      totalBorrowed: 0,
+      totalPaid: 0,
+      currentDebt: 0,
+      debtsCount: 0,
+    };
+    prev.totalBorrowed += amount;
+    prev.totalPaid += paid;
+    prev.currentDebt += current;
+    prev.debtsCount += 1;
+    debtsByShopMap.set(key, prev);
+  }
+
+  const history = historyRows.map((r) => {
+    const payload = r.payload || {};
+    const isPayment = r.action === "PAYMENT";
+    let amount = 0;
+    if (r.action === "CREATED") amount = Number(r.newAmount) || 0;
+    else if (r.action === "UPDATED") amount = payload.added != null ? Number(payload.added) : (Number(r.newAmount) || 0) - (Number(r.oldAmount) || 0);
+    else if (isPayment) amount = payload.payment != null ? Number(payload.payment) : (Number(r.newAmount) || 0) - (Number(r.oldAmount) || 0);
+    return {
+      id: r.id,
+      createdAt: r.createdAt.toISOString(),
+      date: r.createdAt.toISOString().slice(0, 10),
+      action: isPayment ? "To'lov" : "Qarz",
+      amount: Math.abs(amount),
+      qoldiq: payload.balanceAfter != null ? Number(payload.balanceAfter) : null,
+      shopId: r.debt?.shop?.id || "",
+      shopName: r.debt?.shop?.name || "Do'kon",
+    };
+  });
+
+  return {
+    success: true,
+    data: {
+      user: { id: me.id, name: me.name, role: me.role },
+      summary: {
+        totalBorrowed,
+        totalPaid,
+        totalCurrentDebt,
+        shopsCount: debtsByShopMap.size,
+      },
+      shops: Array.from(debtsByShopMap.values()),
+      history,
+    },
+    message: "OK",
+  };
+}
+
+module.exports = { writeDebt, payDebt, getDebtHistory, getAllDebtHistory, getMyDebtSummary };

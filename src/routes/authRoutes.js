@@ -39,5 +39,6 @@ router.post(
   validateShopDetails,
   authController.registerOwner
 );
+router.post("/register-customer", authController.registerCustomer);
 
 module.exports = router;

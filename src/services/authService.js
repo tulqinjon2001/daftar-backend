@@ -356,6 +356,62 @@ async function registerOwner(data) {
   };
 }
 
+/**
+ * Oddiy xaridor ro'yxatdan o'tishi (shop yaratmaydi).
+ * full_name, phone, password
+ */
+async function registerCustomer(data) {
+  const { full_name, phone, password } = data;
+  const normalizedPhone = String(phone || "").replace(/\D/g, "").trim();
+  const verified = await consumeOwnerVerificationGrant(normalizedPhone);
+  if (!verified) {
+    return { success: false, message: "Avval OTP kodni tasdiqlang" };
+  }
+  if (!full_name || !String(full_name).trim()) {
+    return { success: false, message: "Ism kerak" };
+  }
+  if (!password || String(password).length < 8) {
+    return { success: false, message: "Parol kamida 8 belgi bo'lishi kerak" };
+  }
+
+  const existing = await prisma.user.findFirst({
+    where: {
+      OR: [{ phone: normalizedPhone }, { phone: normalizedPhone.slice(-9) }],
+    },
+  });
+  if (existing) {
+    return { success: false, message: "Phone or account already registered" };
+  }
+
+  const email = `customer_${normalizedPhone}_${Date.now()}@qarzdaftar.local`;
+  const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
+  const user = await prisma.user.create({
+    data: {
+      email,
+      password: hashedPassword,
+      name: String(full_name).trim(),
+      phone: normalizedPhone,
+      role: "Customer",
+    },
+  });
+  const tokens = await issueAuthTokens(user.id, user.role);
+  return {
+    success: true,
+    data: {
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+      },
+      shop: null,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    },
+    message: "Customer registered successfully",
+  };
+}
+
 async function refreshTokens(refreshToken) {
   if (!refreshToken) return { success: false, message: "refreshToken kerak" };
   let decoded;
@@ -441,6 +497,7 @@ module.exports = {
   sendOwnerVerificationCode,
   verifyOwnerCode,
   registerOwner,
+  registerCustomer,
   sendPasswordResetCode,
   verifyPasswordResetCode,
   setNewPassword,

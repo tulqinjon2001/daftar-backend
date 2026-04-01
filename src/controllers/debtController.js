@@ -71,4 +71,17 @@ async function getAllDebtHistory(req, res) {
   }
 }
 
-module.exports = { writeDebt, payDebt, getDebtHistory, getAllDebtHistory };
+async function getMyDebtSummary(req, res) {
+  try {
+    const result = await debtService.getMyDebtSummary(req.userId);
+    if (!result.success) {
+      return apiResponse(res, false, null, result.message, 400);
+    }
+    apiResponse(res, true, result.data, result.message);
+  } catch (err) {
+    console.error("getMyDebtSummary", err);
+    apiResponse(res, false, null, "Summary failed", 500);
+  }
+}
+
+module.exports = { writeDebt, payDebt, getDebtHistory, getAllDebtHistory, getMyDebtSummary };

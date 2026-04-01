@@ -4,6 +4,7 @@ const debtController = require("../controllers/debtController");
 
 const router = express.Router();
 router.use(authMiddleware);
+router.get("/me/summary", debtController.getMyDebtSummary);
 router.use(requireOwner);
 
 router.get("/history/all", debtController.getAllDebtHistory);
